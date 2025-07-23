@@ -39,7 +39,18 @@ miniproject_tms/
 
 ## Installation
 
-### 1. Install SUMO
+### 1. Clone the Repository
+
+First, clone this repository to your local machine:
+
+```bash
+git clone <https://github.com/Ajay-puttam/MiniProject_TMS.git>
+cd miniproject_tms
+```
+
+
+
+### 2. Install SUMO
 
 - **Windows:** Download and install from [SUMO Downloads](https://sumo.dlr.de/docs/Downloads.php), and add SUMO to your PATH.
 - **macOS:**  
@@ -51,13 +62,17 @@ miniproject_tms/
   sudo apt-get install sumo sumo-tools sumo-doc
   ```
 
-### 2. Install Python Dependencies
+### 3. Install Python Dependencies
+
+Make sure you have Python 3.7 or higher installed. Then, install the required Python packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Verify Installation
+### 4. Verify Installation
+
+Run the test script to verify your setup:
 
 ```bash
 python test_system.py
