@@ -44,7 +44,7 @@ miniproject_tms/
 First, clone this repository to your local machine:
 
 ```bash
-git clone <https://github.com/Ajay-puttam/MiniProject_TMS.git>
+git clone https://github.com/Ajay-puttam/MiniProject_TMS.git
 cd miniproject_tms
 ```
 
