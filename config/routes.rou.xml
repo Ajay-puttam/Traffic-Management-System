@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+
+    <!-- Vehicle Type Definitions -->
+    <vType id="car" accel="2.6" decel="4.5" sigma="0.5" length="5" minGap="2.5" maxSpeed="16.67" guiShape="passenger"/>
+    <vType id="bus" accel="1.2" decel="4.5" sigma="0.5" length="12" minGap="3" maxSpeed="13.89" guiShape="bus"/>
+    <vType id="bike" accel="1.2" decel="4.5" sigma="0.5" length="2" minGap="1" maxSpeed="11.11" guiShape="motorcycle"/>
+    <vType id="emergency" accel="2.6" decel="4.5" sigma="0.5" length="6" minGap="2.5" maxSpeed="20.83" guiShape="emergency" color="1,0,0"/>
+
+    <!-- Route Definitions -->
+    <route id="north_to_south" edges="north2center center2south"/>
+    <route id="north_to_east" edges="north2center center2east"/>
+    <route id="north_to_west" edges="north2center center2west"/>
+    
+    <route id="south_to_north" edges="south2center center2north"/>
+    <route id="south_to_east" edges="south2center center2east"/>
+    <route id="south_to_west" edges="south2center center2west"/>
+    
+    <route id="east_to_west" edges="east2center center2west"/>
+    <route id="east_to_north" edges="east2center center2north"/>
+    <route id="east_to_south" edges="east2center center2south"/>
+    
+    <route id="west_to_east" edges="west2center center2east"/>
+    <route id="west_to_north" edges="west2center center2north"/>
+    <route id="west_to_south" edges="west2center center2south"/>
+
+    <!-- Vehicle Flows -->
+    <!-- North approach vehicles -->
+    <flow id="north_cars" begin="0" end="3600" vehsPerHour="120" route="north_to_south" type="car"/>
+    <flow id="north_cars_east" begin="0" end="3600" vehsPerHour="80" route="north_to_east" type="car"/>
+    <flow id="north_cars_west" begin="0" end="3600" vehsPerHour="60" route="north_to_west" type="car"/>
+    <flow id="north_buses" begin="0" end="3600" vehsPerHour="20" route="north_to_south" type="bus"/>
+    <flow id="north_bikes" begin="0" end="3600" vehsPerHour="40" route="north_to_south" type="bike"/>
+
+    <!-- South approach vehicles -->
+    <flow id="south_cars" begin="0" end="3600" vehsPerHour="100" route="south_to_north" type="car"/>
+    <flow id="south_cars_east" begin="0" end="3600" vehsPerHour="70" route="south_to_east" type="car"/>
+    <flow id="south_cars_west" begin="0" end="3600" vehsPerHour="50" route="south_to_west" type="car"/>
+    <flow id="south_buses" begin="0" end="3600" vehsPerHour="15" route="south_to_north" type="bus"/>
+    <flow id="south_bikes" begin="0" end="3600" vehsPerHour="35" route="south_to_north" type="bike"/>
+
+    <!-- East approach vehicles -->
+    <flow id="east_cars" begin="0" end="3600" vehsPerHour="110" route="east_to_west" type="car"/>
+    <flow id="east_cars_north" begin="0" end="3600" vehsPerHour="75" route="east_to_north" type="car"/>
+    <flow id="east_cars_south" begin="0" end="3600" vehsPerHour="65" route="east_to_south" type="car"/>
+    <flow id="east_buses" begin="0" end="3600" vehsPerHour="18" route="east_to_west" type="bus"/>
+    <flow id="east_bikes" begin="0" end="3600" vehsPerHour="45" route="east_to_west" type="bike"/>
+
+    <!-- West approach vehicles -->
+    <flow id="west_cars" begin="0" end="3600" vehsPerHour="95" route="west_to_east" type="car" departLane="0"/>
+    <flow id="west_cars_north" begin="0" end="3600" vehsPerHour="65" route="west_to_north" type="car"/>
+    <flow id="west_cars_south" begin="0" end="3600" vehsPerHour="55" route="west_to_south" type="car"/>
+    <flow id="west_buses" begin="0" end="3600" vehsPerHour="12" route="west_to_east" type="bus" departLane="0"/>
+    <flow id="west_bikes" begin="0" end="3600" vehsPerHour="30" route="west_to_east" type="bike" departLane="0"/>
+
+    <!-- Emergency vehicles (random spawn) -->
+    <flow id="emergency_north" begin="0" end="3600" vehsPerHour="2" route="north_to_south" type="emergency"/>
+    <flow id="emergency_south" begin="0" end="3600" vehsPerHour="2" route="south_to_north" type="emergency"/>
+    <flow id="emergency_east" begin="0" end="3600" vehsPerHour="2" route="east_to_west" type="emergency"/>
+    <flow id="emergency_west" begin="0" end="3600" vehsPerHour="2" route="west_to_east" type="emergency" departLane="0"/>
+
+</routes> 
