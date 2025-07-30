@@ -6,6 +6,7 @@ import random
 from typing import Dict, Any, Tuple, List
 from traffic_simulator import TrafficSimulator
 import xml.etree.ElementTree as ET
+import re
 
 
 class TrafficVisualizer:
@@ -49,6 +50,42 @@ class TrafficVisualizer:
         # SUMO netOffset correction
         self.net_offset_x = 100.0
         self.net_offset_y = 100.0
+
+        # --- Parse SUMO network bounds and netOffset from XML ---
+        net_xml = "config/intersection.net.xml"
+        try:
+            tree = ET.parse(net_xml)
+            root = tree.getroot()
+            location = root.find("location")
+            if location is not None:
+                net_offset_str = location.attrib.get("netOffset", "0.0,0.0")
+                conv_boundary_str = location.attrib.get(
+                    "convBoundary", "0.0,0.0,200.0,200.0"
+                )
+                self.net_offset_x, self.net_offset_y = map(
+                    float, net_offset_str.split(",")
+                )
+                x_min, y_min, x_max, y_max = map(float, conv_boundary_str.split(","))
+                self.sumo_x_min = x_min
+                self.sumo_x_max = x_max
+                self.sumo_y_min = y_min
+                self.sumo_y_max = y_max
+            else:
+                # Fallback to defaults if <location> not found
+                self.sumo_x_min = 0.0
+                self.sumo_x_max = 200.0
+                self.sumo_y_min = 0.0
+                self.sumo_y_max = 200.0
+                self.net_offset_x = 100.0
+                self.net_offset_y = 100.0
+        except Exception as e:
+            print(f"[WARN] Could not parse network bounds from {net_xml}: {e}")
+            self.sumo_x_min = 0.0
+            self.sumo_x_max = 200.0
+            self.sumo_y_min = 0.0
+            self.sumo_y_max = 200.0
+            self.net_offset_x = 100.0
+            self.net_offset_y = 100.0
 
         # Vehicle PNGs (smaller sizes for better fit)
         self.car_pngs = [
@@ -374,15 +411,23 @@ class TrafficVisualizer:
             pygame.draw.circle(self.screen, self.BLACK, (x, y), 15, 2)
 
     def sumo_to_screen(self, x, y):
-        # Correct for SUMO netOffset
-        x -= self.net_offset_x  # e.g., 100.0
-        y -= self.net_offset_y  # e.g., 100.0
-        # Scale to screen
-        scale = self.sim_area.width / 200.0  # assuming 200x200m area
-        screen_x = int(self.sim_area.centerx + x * scale)
-        screen_y = int(
-            self.sim_area.centery - y * scale
-        )  # Y axis is inverted in pygame
+        # Use parsed netOffset and convBoundary for accurate mapping
+        x -= self.net_offset_x
+        y -= self.net_offset_y
+        # Calculate scale based on actual network bounds
+        sumo_width = self.sumo_x_max - self.sumo_x_min
+        sumo_height = self.sumo_y_max - self.sumo_y_min
+        scale_x = self.sim_area.width / sumo_width
+        scale_y = self.sim_area.height / sumo_height
+        # Use the smaller scale to maintain aspect ratio
+        scale = min(scale_x, scale_y)
+        zoom_factor = 1.7  # <--- Increase this value to zoom in more or less
+        scale *= zoom_factor
+        # Center the network in the simulation area
+        center_x = self.sim_area.centerx
+        center_y = self.sim_area.centery
+        screen_x = int(center_x + x * scale)
+        screen_y = int(center_y - y * scale)  # Y axis is inverted in pygame
         return screen_x, screen_y
 
     def get_vehicle_rotation(self, vehicle_info):
@@ -417,10 +462,16 @@ class TrafficVisualizer:
     def draw_vehicles(self, vehicles: Dict[str, Any]):
         """
         Draw vehicles on the intersection, aligned to their lanes.
-
-        Args:
-            vehicles: Dictionary of vehicle information
+        Also draws debug info: lane centerlines, vehicle positions, and logs lane_id/lane_index.
         """
+        # --- DEBUG: Draw lane centerlines ---
+        for lane_id, shape in self.lane_shapes.items():
+            color = (0, 200, 255)  # Cyan for lane centerlines
+            for i in range(len(shape) - 1):
+                x1, y1 = self.sumo_to_screen(*shape[i])
+                x2, y2 = self.sumo_to_screen(*shape[i + 1])
+                pygame.draw.line(self.screen, color, (x1, y1), (x2, y2), 2)
+
         # Per-direction lane width (side-by-side gap)
         lane_widths = {
             "north": 40,  # px
@@ -453,15 +504,54 @@ class TrafficVisualizer:
                 direction = "west"
             else:
                 direction = "unknown"
-            lane_width = lane_widths.get(direction, 40)
-            dir_offset = direction_offsets.get(direction, 0)
+            # Improved direction inference: fallback to lane_id if edge is not helpful
+            if direction == "unknown":
+                if "north" in lane_id:
+                    direction = "north"
+                elif "south" in lane_id:
+                    direction = "south"
+                elif "east" in lane_id:
+                    direction = "east"
+                elif "west" in lane_id:
+                    direction = "west"
+            # If still unknown, print a warning and skip offsetting, but suppress warning for connector lanes (lane_id starting with ':')
+            if direction == "unknown":
+                if not lane_id.startswith(":"):
+                    print(
+                        f"[WARN] Could not determine direction for vehicle {vehicle_id} (lane_id={lane_id}). Skipping lane offset."
+                    )
+                lane_width = 0
+                dir_offset = 0
+            else:
+                lane_width = lane_widths.get(direction, 40)
+                dir_offset = direction_offsets.get(direction, 0)
             lane_index = 1
-            if lane_id and "_" in lane_id:
-                try:
-                    lane_index = int(lane_id.split("_")[-1])
-                except Exception:
+            # Improved lane index extraction for various lane_id formats
+            lane_index_match = re.search(r"_(\d+)$", lane_id)
+            if lane_index_match:
+                lane_index = int(lane_index_match.group(1))
+            else:
+                # Try to extract from patterns like ':center_20_0' or ':center_10_0'
+                alt_match = re.search(r"_(\d+)_?(\d+)?$", lane_id)
+                if alt_match:
+                    # Use the last group that is not None
+                    if alt_match.group(2):
+                        lane_index = int(alt_match.group(2))
+                    else:
+                        lane_index = int(alt_match.group(1))
+                else:
+                    print(
+                        f"[WARN] Could not extract lane_index from lane_id='{lane_id}' for vehicle {vehicle_id}. Defaulting to 1."
+                    )
                     lane_index = 1
+            # --- DEBUG: Print lane_id and lane_index ---
+            print(
+                f"Vehicle {vehicle_id}: lane_id={lane_id}, lane_index={lane_index}, direction={direction}"
+            )
             offset = (lane_index - (num_lanes - 1) / 2) * lane_width
+            # --- ADJUST VEHICLE POSITION TO MATCH CYAN LINES ---
+            # For all vehicles, use the lane shape (cyan line) as the true center for vehicle placement.
+            # Only apply offset for approach lanes (not for connector lanes, i.e., lane_id starting with ':').
             if lane_id in self.lane_shapes and lane_pos is not None:
                 shape = self.lane_shapes[lane_id]
                 x, y = self.interpolate_along_shape(shape, lane_pos)
@@ -469,11 +559,16 @@ class TrafficVisualizer:
             else:
                 position = vehicle_info.get("position", (0, 0))
                 screen_x, screen_y = self.sumo_to_screen(position[0], position[1])
-            # Apply offset to the correct axis
-            if direction in ["north", "south"]:
-                screen_x += offset + dir_offset
-            elif direction in ["east", "west"]:
-                screen_y += offset + dir_offset
+            # Only apply offset for approach lanes (not for connector lanes)
+            if not lane_id.startswith(":"):
+                if direction in ["north", "south"]:
+                    screen_x += offset + dir_offset
+                elif direction in ["east", "west"]:
+                    screen_y += offset + dir_offset
+            # --- DEBUG: Draw vehicle position as a small circle ---
+            pygame.draw.circle(
+                self.screen, (255, 0, 0), (int(screen_x), int(screen_y)), 6
+            )
             # Consistent car image assignment
             if vehicle_type == "car":
                 idx = abs(hash(vehicle_id)) % len(self.car_pngs)
