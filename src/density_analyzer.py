@@ -10,7 +10,7 @@ class DensityAnalyzer:
     """
 
     def __init__(self):
-        # Updated edge IDs to match the new network
+        # CORRECTED: Updated edge IDs to match the intersection.net.xml file
         self.approaches = ["north2center", "south2center", "east2center", "west2center"]
         self.density_history = {approach: [] for approach in self.approaches}
         self.max_history_length = 50  # Keep last 50 density readings
@@ -129,6 +129,27 @@ class DensityAnalyzer:
         except Exception as e:
             print(f"Error checking emergency vehicles: {e}")
             return 0
+
+    def get_vehicle_counts_by_type(self, approach: str) -> Dict[str, int]:
+        """
+        Get the number of vehicles of each type on a given approach.
+
+        Args:
+            approach: The approach edge ID
+
+        Returns:
+            Dict[str, int]: A dictionary mapping vehicle type to count
+        """
+        vehicle_counts = {"car": 0, "bus": 0, "bike": 0, "emergency": 0}
+        try:
+            vehicle_ids = self._get_vehicle_ids(approach)
+            for vehicle_id in vehicle_ids:
+                vehicle_type = traci.vehicle.getTypeID(vehicle_id)
+                if vehicle_type in vehicle_counts:
+                    vehicle_counts[vehicle_type] += 1
+        except Exception as e:
+            print(f"Error getting vehicle counts by type: {e}")
+        return vehicle_counts
 
     def get_optimization_recommendations(self) -> Dict[str, any]:
         """

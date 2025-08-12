@@ -105,13 +105,12 @@ def run_headless_simulation(duration: int = 3600):
     simulator.stop_simulation()
 
 
-def run_visual_simulation(auto_step: bool = True, step_delay: float = 0.1):
+def run_visual_simulation(auto_step: bool = True):
     """
     Run simulation with Pygame visualization.
 
     Args:
         auto_step: Whether to automatically step the simulation
-        step_delay: Delay between auto-steps in seconds
     """
     print("Starting visual simulation...")
 
@@ -134,8 +133,9 @@ def run_visual_simulation(auto_step: bool = True, step_delay: float = 0.1):
     print("  Q - Quit")
     print("  S - Toggle auto-step mode")
 
+    # This is the new, corrected function call
     # Run visualizer
-    visualizer.run(auto_step=auto_step, step_delay=step_delay)
+    visualizer.run(auto_step=auto_step, step_delay=0.01)  # Default to 0.01 second delay
 
 
 def run_interactive_mode():
@@ -190,12 +190,6 @@ def main():
         help="Auto-step simulation (visual mode)",
     )
     parser.add_argument(
-        "--step-delay",
-        type=float,
-        default=0.1,
-        help="Delay between auto-steps in seconds",
-    )
-    parser.add_argument(
         "--config",
         type=str,
         default="config/sumo.sumocfg",
@@ -225,7 +219,7 @@ def main():
         if args.mode == "headless":
             run_headless_simulation(args.duration)
         elif args.mode == "visual":
-            run_visual_simulation(args.auto_step, args.step_delay)
+            run_visual_simulation(args.auto_step)
         elif args.mode == "interactive":
             run_interactive_mode()
 

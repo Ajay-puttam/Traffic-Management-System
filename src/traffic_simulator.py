@@ -18,6 +18,10 @@ class TrafficSimulator:
         self.simulation_time = 0
         self.optimization_history = []
         self.max_history_length = 100
+        self.total_vehicles_passed = 0
+        self.passed_vehicles = set()
+
+    # In src/traffic_simulator.py
 
     def start_simulation(self) -> bool:
         """
@@ -34,6 +38,8 @@ class TrafficSimulator:
 
             # Start SUMO with the configuration
             sumo_binary = "sumo"
+            # --- THIS IS THE FIX ---
+            # Add the new flags to the sumo_cmd list
             sumo_cmd = [
                 sumo_binary,
                 "-c",
@@ -42,6 +48,10 @@ class TrafficSimulator:
                 "true",
                 "--no-warnings",
                 "true",
+                "--collision.check-junctions",  # Prevents junction blocking
+                "true",
+                "--collision.action",
+                "teleport",  # Removes vehicles that get stuck
             ]
 
             traci.start(sumo_cmd)
@@ -54,6 +64,8 @@ class TrafficSimulator:
         except Exception as e:
             print(f"Error starting SUMO simulation: {e}")
             return False
+
+    # In src/traffic_simulator.py
 
     def step_simulation(self) -> Dict[str, Any]:
         """
@@ -78,8 +90,18 @@ class TrafficSimulator:
 
             self.simulation_time = current_time
 
+            # --- New logic to count passed vehicles ---
+            arrived_vehicles = traci.simulation.getArrivedIDList()
+            for vehicle_id in arrived_vehicles:
+                if vehicle_id not in self.passed_vehicles:
+                    self.total_vehicles_passed += 1
+                    self.passed_vehicles.add(vehicle_id)
+
             # Perform optimization
             optimization_result = self.optimizer.optimize_traffic_lights()
+
+            # Handle vehicle yielding at the junction to prevent collisions
+            yielding_result = self.optimizer.manage_junction_yielding()
 
             # Handle emergency vehicles
             emergency_result = self.optimizer.handle_emergency_vehicles()
@@ -91,6 +113,7 @@ class TrafficSimulator:
             step_result = {
                 "timestamp": self.simulation_time,
                 "optimization": optimization_result,
+                "yielding": yielding_result,  # Add yielding results to the log
                 "emergency": emergency_result,
                 "metrics": metrics,
             }
@@ -199,8 +222,12 @@ class TrafficSimulator:
                     speed = traci.vehicle.getSpeed(vehicle_id)
                     waiting_time = traci.vehicle.getWaitingTime(vehicle_id)
                     edge = traci.vehicle.getRoadID(vehicle_id)
+                    # Inside the for loop
                     angle = traci.vehicle.getAngle(vehicle_id)
                     lane = traci.vehicle.getLaneID(vehicle_id)
+                    lane_pos = traci.vehicle.getLanePosition(
+                        vehicle_id
+                    )  # <-- ADD THIS LINE
                     vehicles[vehicle_id] = {
                         "position": position,
                         "type": vehicle_type,
@@ -208,7 +235,8 @@ class TrafficSimulator:
                         "waiting_time": waiting_time,
                         "edge": edge,
                         "angle": angle,
-                        "lane": lane,  # Added lane info
+                        "lane": lane,
+                        "lanePosition": lane_pos,  # <-- AND ADD THIS LINE
                     }
                 except:
                     continue
@@ -293,6 +321,9 @@ class TrafficSimulator:
             if success:
                 self.optimization_history.clear()
                 self.optimizer.reset_optimization()
+                self.total_vehicles_passed = 0
+                self.passed_vehicles = set()
+
                 print("Simulation reset successfully")
 
             return success
@@ -300,6 +331,15 @@ class TrafficSimulator:
         except Exception as e:
             print(f"Error resetting simulation: {e}")
             return False
+
+    def get_total_vehicles_passed(self) -> int:
+        """
+        Get the total number of vehicles that have passed through the intersection.
+
+        Returns:
+            int: The total number of vehicles passed
+        """
+        return self.total_vehicles_passed
 
     def get_performance_metrics(self) -> Dict[str, Any]:
         """

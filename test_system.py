@@ -50,6 +50,9 @@ def test_imports():
     return True
 
 
+# In test_system.py
+
+
 def test_density_analyzer():
     """Test DensityAnalyzer functionality."""
     print("\nTesting DensityAnalyzer...")
@@ -60,15 +63,23 @@ def test_density_analyzer():
         analyzer = DensityAnalyzer()
 
         # Test basic functionality
-        assert analyzer.approaches == ["north_in", "south_in", "east_in", "west_in"]
+        # --- CORRECTED THIS LINE ---
+        assert analyzer.approaches == [
+            "north2center",
+            "south2center",
+            "east2center",
+            "west2center",
+        ]
         assert len(analyzer.density_history) == 4
 
         # Test density calculation (mock)
-        density = analyzer.calculate_density("north_in")
+        # --- CORRECTED THIS LINE ---
+        density = analyzer.calculate_density("north2center")
         assert isinstance(density, float)
 
         # Test congestion level
-        level = analyzer.get_congestion_level("north_in")
+        # --- CORRECTED THIS LINE ---
+        level = analyzer.get_congestion_level("north2center")
         assert level in ["Low", "Medium", "High", "Critical"]
 
         print("✓ DensityAnalyzer tests passed")

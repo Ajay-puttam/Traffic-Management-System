@@ -8,4 +8,4 @@
     <edge id="center2east" from="center" to="east" numLanes="2" speed="13.89"/>
     <edge id="west2center" from="west" to="center" numLanes="2" speed="13.89"/>
     <edge id="center2west" from="center" to="west" numLanes="2" speed="13.89"/>
-</edges> 
+</edges>

@@ -1,52 +1,71 @@
 import traci
 import time
-from typing import Dict, List, Tuple, Any
+import logging
+from typing import Dict, List, Optional, Any
 from density_analyzer import DensityAnalyzer
 
 
 class TrafficOptimizer:
     """
-    AI-based traffic light optimizer that adjusts timing based on vehicle density.
+    AI-based traffic light optimizer that adjusts timing based on vehicle density and other real-time factors.
     """
 
     def __init__(self):
         self.density_analyzer = DensityAnalyzer()
         self.traffic_light_id = "center"
-        self.phase_durations = [30, 6, 30, 6]  # Default phase durations
-        self.current_phase = 0
-        self.phase_start_time = 0
-        self.min_phase_duration = 15  # Minimum green time
-        self.max_phase_duration = 60  # Maximum green time
-        self.yellow_duration = 6  # Yellow light duration
-        self.optimization_interval = 5  # Check for optimization every 5 seconds
+        self.phase_start_time = 0.0
+        self.current_phase_index = 0
+
+        # --- THIS IS THE FIX ---
+        # Define the phases with the yellow light duration reduced to 3 seconds
+        self.phases = [
+            {
+                "duration": 30,
+                "state": "GGGggrrrrrGGGggrrrrr",
+            },  # Phase 0: North-South Green
+            {
+                "duration": 3,
+                "state": "yyyyyrrrrryyyyyrrrrr",
+            },  # Phase 1: North-South Yellow
+            {
+                "duration": 30,
+                "state": "rrrrrGGGggrrrrrGGGgg",
+            },  # Phase 2: East-West Green
+            {
+                "duration": 3,
+                "state": "rrrrryyyyyrrrrryyyyy",
+            },  # Phase 3: East-West Yellow
+        ]
+
+        # Constants
+        self.MIN_GREEN = 15
+        self.MAX_GREEN = 90
+        self.MAX_WAIT_TIME = 60  # Max time a direction can wait for a green light
+        self.PREEMPTIVE_SWITCH_THRESHOLD = (
+            1.5  # Switch if waiting priority is 1.5x higher
+        )
 
     def get_current_phase_info(self) -> Dict[str, Any]:
-        """
-        Get current traffic light phase information.
-
-        Returns:
-            Dict containing current phase info
-        """
+        """Get the current traffic light phase and time spent."""
         try:
-            current_phase = traci.trafficlight.getPhase(self.traffic_light_id)
-            phase_duration = traci.trafficlight.getPhaseDuration(self.traffic_light_id)
-            state = traci.trafficlight.getRedYellowGreenState(self.traffic_light_id)
-            current_time = traci.simulation.getTime()
-
-            # Handle different return types from traci.simulation.getTime()
-            if isinstance(current_time, (tuple, list)):
-                current_time = current_time[0] if current_time else 0.0
+            current_time = float(traci.simulation.getTime())
+            phase_index = traci.trafficlight.getPhase(self.traffic_light_id)
+            # Ensure phase_index is within the valid range
+            if 0 <= phase_index < len(self.phases):
+                phase_duration = self.phases[phase_index]["duration"]
             else:
-                current_time = float(current_time)
+                phase_duration = 30  # Default duration if phase is out of bounds
 
             return {
-                "phase": current_phase,
+                "phase": phase_index,
                 "duration": phase_duration,
-                "state": state,
+                "state": traci.trafficlight.getRedYellowGreenState(
+                    self.traffic_light_id
+                ),
                 "time_in_phase": current_time - self.phase_start_time,
             }
         except Exception as e:
-            print(f"Error getting phase info: {e}")
+            logging.warning(f"[Phase Info] Error: {e}")
             return {
                 "phase": 0,
                 "duration": 30,
@@ -55,221 +74,214 @@ class TrafficOptimizer:
             }
 
     def optimize_traffic_lights(self) -> Dict[str, Any]:
-        """
-        Main optimization function that adjusts traffic light timing.
-
-        Returns:
-            Dict containing optimization results
-        """
+        """Dynamically adjust signal timing based on real-time traffic data."""
         current_time = traci.simulation.getTime()
+        phase_info = self.get_current_phase_info()
+        recs = self.density_analyzer.get_optimization_recommendations()
 
-        # Get current optimization recommendations
-        recommendations = self.density_analyzer.get_optimization_recommendations()
-        current_phase_info = self.get_current_phase_info()
+        # Check for preemptive switch
+        if self._should_preempt(phase_info, recs):
+            self._switch_to_next_phase(current_time, recs)
+        # Check if it's time to switch to the next phase based on duration
+        elif phase_info["time_in_phase"] >= phase_info["duration"]:
+            self._switch_to_next_phase(current_time, recs)
 
-        optimization_result = {
+        return {
             "timestamp": current_time,
-            "current_phase": current_phase_info["phase"],
-            "current_state": current_phase_info["state"],
-            "recommendations": recommendations,
-            "optimization_applied": False,
-            "reason": "No optimization needed",
+            "current_phase": self.current_phase_index,
+            "recommendations": recs,
         }
 
-        # Only optimize during green phases (0 and 2)
-        if current_phase_info["phase"] in [0, 2]:
-            time_in_phase = current_phase_info["time_in_phase"]
-
-            # Check if we should extend the current phase
-            if time_in_phase >= self.min_phase_duration:
-                should_extend = self.should_extend_phase(
-                    current_phase_info["phase"], recommendations
-                )
-
-                if should_extend:
-                    # Extend the current phase
-                    new_duration = self.calculate_optimal_duration(
-                        current_phase_info["phase"], recommendations
-                    )
-                    traci.trafficlight.setPhaseDuration(
-                        self.traffic_light_id, new_duration
-                    )
-
-                    optimization_result["optimization_applied"] = True
-                    optimization_result["reason"] = (
-                        f"Extended phase {current_phase_info['phase']} to {new_duration}s"
-                    )
-                    optimization_result["new_duration"] = new_duration
-
-        return optimization_result
-
-    def should_extend_phase(self, phase: int, recommendations: Dict[str, Any]) -> bool:
-        """
-        Determine if the current phase should be extended.
-
-        Args:
-            phase: Current traffic light phase
-            recommendations: Optimization recommendations
-
-        Returns:
-            bool: True if phase should be extended
-        """
-        if phase == 0:  # North-South green
-            north_priority = recommendations["priorities"].get("north_in", 0)
-            south_priority = recommendations["priorities"].get("south_in", 0)
-            max_priority = max(north_priority, south_priority)
-
-        elif phase == 2:  # East-West green
-            east_priority = recommendations["priorities"].get("east_in", 0)
-            west_priority = recommendations["priorities"].get("west_in", 0)
-            max_priority = max(east_priority, west_priority)
-
-        else:
+    def _should_preempt(self, phase_info: Dict[str, Any], recs: Dict[str, Any]) -> bool:
+        """Determines if a preemptive switch is needed."""
+        if phase_info["phase"] not in [0, 2]:  # Only check green phases
             return False
 
-        # Extend if priority is high enough
-        return max_priority > 50  # Threshold for extension
+        if phase_info["time_in_phase"] < self.MIN_GREEN:
+            return False
 
-    def calculate_optimal_duration(
-        self, phase: int, recommendations: Dict[str, Any]
-    ) -> int:
-        """
-        Calculate optimal duration for the current phase.
+        priorities = recs["priorities"]
+        current_priority = 0
+        waiting_priority = 0
 
-        Args:
-            phase: Current traffic light phase
-            recommendations: Optimization recommendations
-
-        Returns:
-            int: Optimal duration in seconds
-        """
-        base_duration = 30
-
-        if phase == 0:  # North-South green
-            north_density = recommendations["densities"].get("north_in", 0)
-            south_density = recommendations["densities"].get("south_in", 0)
-            total_density = north_density + south_density
-
-        elif phase == 2:  # East-West green
-            east_density = recommendations["densities"].get("east_in", 0)
-            west_density = recommendations["densities"].get("west_in", 0)
-            total_density = east_density + west_density
-
-        else:
-            return base_duration
-
-        # Adjust duration based on density
-        if total_density > 0:
-            # Scale duration based on density (more density = longer green)
-            density_factor = min(2.0, 1 + total_density * 5)  # Max 2x duration
-            optimal_duration = int(base_duration * density_factor)
-
-            # Clamp to valid range
-            optimal_duration = max(
-                self.min_phase_duration, min(self.max_phase_duration, optimal_duration)
+        if phase_info["phase"] == 0:  # North-South is green
+            current_priority = max(
+                priorities.get("north2center", 0), priorities.get("south2center", 0)
+            )
+            waiting_priority = max(
+                priorities.get("east2center", 0), priorities.get("west2center", 0)
+            )
+        elif phase_info["phase"] == 2:  # East-West is green
+            current_priority = max(
+                priorities.get("east2center", 0), priorities.get("west2center", 0)
+            )
+            waiting_priority = max(
+                priorities.get("north2center", 0), priorities.get("south2center", 0)
             )
 
-            return optimal_duration
+        return waiting_priority > current_priority * self.PREEMPTIVE_SWITCH_THRESHOLD
 
-        return base_duration
+    def _switch_to_next_phase(self, current_time: float, recs: Dict[str, Any]):
+        """Switches the traffic light to the next phase."""
+        self.current_phase_index = (self.current_phase_index + 1) % len(self.phases)
+
+        # If the new phase is a green light phase, calculate its optimal duration
+        if self.current_phase_index in [0, 2]:
+            new_duration = self._calculate_optimal_duration(
+                self.current_phase_index, recs
+            )
+            self.phases[self.current_phase_index]["duration"] = new_duration
+
+        traci.trafficlight.setPhase(self.traffic_light_id, self.current_phase_index)
+        # Use the duration from the phases list, which might be newly calculated
+        traci.trafficlight.setPhaseDuration(
+            self.traffic_light_id, self.phases[self.current_phase_index]["duration"]
+        )
+        self.phase_start_time = current_time
+
+    def _calculate_optimal_duration(
+        self, phase_index: int, recs: Dict[str, Any]
+    ) -> int:
+        """Compute optimal green light duration based on density and priority."""
+        priorities = recs["priorities"]
+
+        if phase_index == 0:  # North-South
+            priority = max(
+                priorities.get("north2center", 0), priorities.get("south2center", 0)
+            )
+        elif phase_index == 2:  # East-West
+            priority = max(
+                priorities.get("east2center", 0), priorities.get("west2center", 0)
+            )
+        else:
+            return self.phases[phase_index]["duration"]
+
+        # Scale duration based on priority score
+        duration = self.MIN_GREEN + (priority / 100) * (self.MAX_GREEN - self.MIN_GREEN)
+
+        return int(max(self.MIN_GREEN, min(self.MAX_GREEN, duration)))
 
     def handle_emergency_vehicles(self) -> Dict[str, Any]:
-        """
-        Handle emergency vehicle priority.
-
-        Returns:
-            Dict containing emergency handling results
-        """
-        emergency_result = {
+        """Give priority to emergency vehicles."""
+        result = {
             "emergency_detected": False,
             "action_taken": False,
             "affected_approach": None,
         }
-        # Check for emergency vehicles in all approaches
         for approach in self.density_analyzer.approaches:
-            emergency_count = self.density_analyzer.check_emergency_vehicles(approach)
-            if emergency_count > 0:
-                emergency_result["emergency_detected"] = True
-                emergency_result["affected_approach"] = approach
-                current_phase_info = self.get_current_phase_info()
-                # North-South approaches
-                if (
-                    approach in ["north2center", "south2center"]
-                    and current_phase_info["phase"] != 0
-                ):
+            if self.density_analyzer.check_emergency_vehicles(approach) > 0:
+                result.update(
+                    {"emergency_detected": True, "affected_approach": approach}
+                )
+                phase = self.get_current_phase_info()["phase"]
+                if approach in ["north2center", "south2center"] and phase != 0:
                     traci.trafficlight.setPhase(self.traffic_light_id, 0)
-                    traci.trafficlight.setPhaseDuration(self.traffic_light_id, 45)
-                    emergency_result["action_taken"] = True
-                # East-West approaches
-                elif (
-                    approach in ["east2center", "west2center"]
-                    and current_phase_info["phase"] != 2
-                ):
+                    traci.trafficlight.setPhaseDuration(self.traffic_light_id, 60)
+                    result["action_taken"] = True
+                elif approach in ["east2center", "west2center"] and phase != 2:
                     traci.trafficlight.setPhase(self.traffic_light_id, 2)
-                    traci.trafficlight.setPhaseDuration(self.traffic_light_id, 45)
-                    emergency_result["action_taken"] = True
+                    traci.trafficlight.setPhaseDuration(self.traffic_light_id, 60)
+                    result["action_taken"] = True
                 break
-        return emergency_result
+        return result
+
+    def manage_junction_yielding(self) -> Dict[str, Any]:
+        """Ensure vehicles turning left yield to straight-moving vehicles."""
+        actions = []
+        turning_left, going_straight = [], []
+
+        try:
+            for vid in traci.vehicle.getIDList():
+                road = traci.vehicle.getRoadID(vid)
+                route = traci.vehicle.getRoute(vid)
+                if road not in route:
+                    continue
+                pos = traci.vehicle.getLanePosition(vid)
+                lane_len = traci.lane.getLength(traci.vehicle.getLaneID(vid))
+                if lane_len - pos < 25:
+                    idx = route.index(road)
+                    if idx + 1 < len(route):
+                        next_edge = route[idx + 1]
+                        info = {"id": vid, "current": road, "next": next_edge}
+                        if self._is_left_turn(road, next_edge):
+                            turning_left.append(info)
+                        elif self._is_straight(road, next_edge):
+                            going_straight.append(info)
+
+            for tveh in turning_left:
+                oncoming = self._find_oncoming_vehicle(tveh, going_straight)
+                if oncoming:
+                    traci.vehicle.setSpeed(tveh["id"], 0.0)
+                    actions.append(f"{tveh['id']} yields to {oncoming['id']}")
+        except traci.TraCIException:
+            pass
+
+        return {"yielding_actions": actions, "applied": bool(actions)}
+
+    def _is_left_turn(self, curr: str, nxt: str) -> bool:
+        return {
+            "north2center": "center2east",
+            "south2center": "center2west",
+            "east2center": "center2south",
+            "west2center": "center2north",
+        }.get(curr) == nxt
+
+    def _is_straight(self, curr: str, nxt: str) -> bool:
+        return {
+            "north2center": "center2south",
+            "south2center": "center2north",
+            "east2center": "center2west",
+            "west2center": "center2east",
+        }.get(curr) == nxt
+
+    def _find_oncoming_vehicle(
+        self, turner: Dict, straight: List[Dict]
+    ) -> Optional[Dict]:
+        """Detect oncoming vehicle conflicting with a left-turner."""
+        opp = {
+            "north2center": "south2center",
+            "south2center": "north2center",
+            "east2center": "west2center",
+            "west2center": "east2center",
+        }.get(turner["current"])
+        return next((v for v in straight if v["current"] == opp), None)
 
     def get_traffic_flow_metrics(self) -> Dict[str, Any]:
-        """
-        Get comprehensive traffic flow metrics.
+        """Combine system health and current signal state."""
+        health = self.density_analyzer.get_system_health_metrics()
+        recs = self.density_analyzer.get_optimization_recommendations()
+        score = max(0, 100 - health["average_waiting_time"] * 2)
 
-        Returns:
-            Dict containing traffic flow metrics
-        """
-        metrics = {}
-
-        # Get density and health metrics
-        health_metrics = self.density_analyzer.get_system_health_metrics()
-        recommendations = self.density_analyzer.get_optimization_recommendations()
-
-        # Calculate flow efficiency
-        total_vehicles = health_metrics["total_vehicles"]
-        avg_waiting_time = health_metrics["average_waiting_time"]
-
-        # Efficiency score (lower waiting time = higher efficiency)
-        efficiency_score = max(0, 100 - avg_waiting_time * 2)
-
-        metrics.update(health_metrics)
-        metrics.update(recommendations)
-        metrics["efficiency_score"] = efficiency_score
-        metrics["current_phase_info"] = self.get_current_phase_info()
-
-        return metrics
+        return {
+            **health,
+            **recs,
+            "efficiency_score": score,
+            "current_phase_info": self.get_current_phase_info(),
+        }
 
     def reset_optimization(self):
-        """
-        Reset optimization parameters to default.
-        """
-        self.phase_durations = [30, 6, 30, 6]
-        self.current_phase = 0
+        """Reset to default program."""
         self.phase_start_time = 0
-
-        # Reset traffic light to default program
+        self.current_phase_index = 0
         try:
-            traci.trafficlight.setProgram(self.traffic_light_id, 0)
-        except:
+            # Re-apply the initial program logic
+            traci.trafficlight.setPhase(self.traffic_light_id, 0)
+            traci.trafficlight.setPhaseDuration(
+                self.traffic_light_id, self.phases[0]["duration"]
+            )
+        except Exception:
             pass
 
     def get_optimization_status(self) -> Dict[str, Any]:
-        """
-        Get current optimization status and statistics.
-
-        Returns:
-            Dict containing optimization status
-        """
-        current_phase_info = self.get_current_phase_info()
-        health_metrics = self.density_analyzer.get_system_health_metrics()
-
+        """Get real-time optimization stats."""
+        phase_info = self.get_current_phase_info()
+        health = self.density_analyzer.get_system_health_metrics()
         return {
-            "current_phase": current_phase_info["phase"],
-            "time_in_phase": current_phase_info["time_in_phase"],
-            "total_vehicles": health_metrics["total_vehicles"],
-            "emergency_vehicles": health_metrics["emergency_vehicles"],
-            "average_waiting_time": health_metrics["average_waiting_time"],
-            "efficiency_score": max(
-                0, 100 - health_metrics["average_waiting_time"] * 2
-            ),
-            "congestion_levels": health_metrics["congestion_levels"],
+            "current_phase": phase_info["phase"],
+            "time_in_phase": phase_info["time_in_phase"],
+            "total_vehicles": health["total_vehicles"],
+            "emergency_vehicles": health["emergency_vehicles"],
+            "average_waiting_time": health["average_waiting_time"],
+            "efficiency_score": max(0, 100 - health["average_waiting_time"] * 2),
+            "congestion_levels": health["congestion_levels"],
         }
